@@ -1,0 +1,37 @@
+name: Build Vaani APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # Uses the official Gradle setup action + a provisioned Gradle binary,
+      # so this works even though gradlew/gradle-wrapper.jar aren't committed
+      # (they're binary files -- generate them locally later with
+      # `gradle wrapper --gradle-version 9.5.1` if you want ./gradlew too).
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.5.1'
+
+      - name: Build debug APK
+        run: gradle assembleDebug --stacktrace
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vaani-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
