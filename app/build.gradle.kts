@@ -1,6 +1,6 @@
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
+    // Kotlin compilation itself is built into AGP 9.0+; no kotlin-android plugin needed.
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.ksp)
 }
@@ -37,9 +37,8 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions {
-        jvmTarget = "17"
-    }
+    // No kotlinOptions{} block: with AGP 9's built-in Kotlin, jvmTarget
+    // defaults to compileOptions.targetCompatibility above automatically.
 
     buildFeatures {
         compose = true
