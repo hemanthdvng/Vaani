@@ -82,5 +82,5 @@ dependencies {
     // On-device LLM: Gemma via LiteRT-LM (Google AI Edge)
     // Check https://mvnrepository.com/artifact/com.google.ai.edge.litertlm/litertlm-android
     // for newer releases -- this is an actively evolving preview library.
-    implementation("com.google.ai.edge.litertlm:litertlm-android:0.9.0-beta")
+    implementation("com.google.ai.edge.litertlm:litertlm-android:0.10.0")
 }
