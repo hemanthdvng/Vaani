@@ -1,21 +1,32 @@
 package com.hemanth.vaani.ui.chat
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.filled.VolumeOff
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.hemanth.vaani.data.AppLanguage
 import com.hemanth.vaani.llm.ModelState
+import com.hemanth.vaani.voice.VoiceInputState
 import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -26,6 +37,19 @@ fun ChatScreen(onBack: () -> Unit, viewModel: ChatViewModel = viewModel()) {
     val language by viewModel.language.collectAsState()
     val isGenerating by viewModel.isGenerating.collectAsState()
     val preferGpu by viewModel.preferGpu.collectAsState()
+    val voiceInputState by viewModel.voiceInputState.collectAsState()
+    val speakRepliesEnabled by viewModel.speakRepliesEnabled.collectAsState()
+
+    val context = LocalContext.current
+    var hasMicPermission by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+                PackageManager.PERMISSION_GRANTED
+        )
+    }
+    val micPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted -> hasMicPermission = granted }
 
     Column(modifier = Modifier.fillMaxSize()) {
         TopAppBar(
@@ -36,6 +60,12 @@ fun ChatScreen(onBack: () -> Unit, viewModel: ChatViewModel = viewModel()) {
                 }
             },
             actions = {
+                IconButton(onClick = { viewModel.setSpeakRepliesEnabled(!speakRepliesEnabled) }) {
+                    Icon(
+                        if (speakRepliesEnabled) Icons.Filled.VolumeUp else Icons.Filled.VolumeOff,
+                        contentDescription = "Toggle spoken replies"
+                    )
+                }
                 LanguagePicker(current = language, onSelect = viewModel::setLanguage)
             }
         )
@@ -44,7 +74,18 @@ fun ChatScreen(onBack: () -> Unit, viewModel: ChatViewModel = viewModel()) {
             is ModelState.Ready -> ChatBody(
                 messages = messages,
                 isGenerating = isGenerating,
-                onSend = viewModel::sendMessage
+                voiceInputState = voiceInputState,
+                hasMicPermission = hasMicPermission,
+                onSend = viewModel::sendMessage,
+                onMicClick = {
+                    if (!hasMicPermission) {
+                        micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                    } else if (voiceInputState == VoiceInputState.Idle) {
+                        viewModel.startVoiceInput()
+                    } else {
+                        viewModel.stopVoiceInput()
+                    }
+                }
             )
             else -> ModelSetupCard(
                 state = modelState,
@@ -164,10 +205,15 @@ private fun mbOf(bytes: Long): String =
 private fun ChatBody(
     messages: List<ChatMessage>,
     isGenerating: Boolean,
-    onSend: (String) -> Unit
+    voiceInputState: VoiceInputState,
+    hasMicPermission: Boolean,
+    onSend: (String) -> Unit,
+    onMicClick: () -> Unit
 ) {
     var input by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
+    val isListening = voiceInputState is VoiceInputState.Listening ||
+        voiceInputState is VoiceInputState.Partial
 
     LaunchedEffect(messages.size) {
         if (messages.isNotEmpty()) listState.animateScrollToItem(messages.size - 1)
@@ -183,6 +229,22 @@ private fun ChatBody(
             items(messages) { message -> MessageBubble(message) }
         }
 
+        if (voiceInputState is VoiceInputState.Partial) {
+            Text(
+                voiceInputState.text,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        } else if (voiceInputState is VoiceInputState.Error) {
+            Text(
+                voiceInputState.message,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error
+            )
+        }
+
         Row(
             modifier = Modifier.fillMaxWidth().padding(12.dp),
             verticalAlignment = Alignment.CenterVertically
@@ -192,15 +254,22 @@ private fun ChatBody(
                 onValueChange = { input = it },
                 modifier = Modifier.weight(1f),
                 placeholder = { Text("Ask Vaani anything...") },
-                enabled = !isGenerating
+                enabled = !isGenerating && !isListening
             )
             Spacer(Modifier.width(8.dp))
+            IconButton(onClick = onMicClick, enabled = !isGenerating) {
+                Icon(
+                    if (isListening) Icons.Filled.Mic else Icons.Filled.MicOff,
+                    contentDescription = if (hasMicPermission) "Voice input" else "Grant microphone permission",
+                    tint = if (isListening) MaterialTheme.colorScheme.error else LocalContentColor.current
+                )
+            }
             IconButton(
                 onClick = {
                     onSend(input)
                     input = ""
                 },
-                enabled = !isGenerating && input.isNotBlank()
+                enabled = !isGenerating && !isListening && input.isNotBlank()
             ) {
                 Icon(Icons.Filled.Send, contentDescription = "Send")
             }
