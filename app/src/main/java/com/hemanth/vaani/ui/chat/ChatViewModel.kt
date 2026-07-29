@@ -3,12 +3,21 @@ package com.hemanth.vaani.ui.chat
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.hemanth.vaani.assistant.ActionExecutor
+import com.hemanth.vaani.assistant.AssistantAction
+import com.hemanth.vaani.assistant.IntentRouter
+import com.hemanth.vaani.call.SpamScorer
 import com.hemanth.vaani.data.AppLanguage
+import com.hemanth.vaani.data.VaaniDatabase
 import com.hemanth.vaani.data.VaaniDefaults
 import com.hemanth.vaani.data.VaaniPreferences
 import com.hemanth.vaani.llm.ModelDownloadManager
 import com.hemanth.vaani.llm.ModelState
 import com.hemanth.vaani.llm.VaaniLlmEngine
+import com.hemanth.vaani.voice.VoiceInputManager
+import com.hemanth.vaani.voice.VoiceInputState
+import com.hemanth.vaani.voice.VoiceOutputManager
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -21,6 +30,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val preferences = VaaniPreferences(application)
     private val downloadManager = ModelDownloadManager(application)
     private val engine = VaaniLlmEngine(application)
+
+    private val dao = VaaniDatabase.getInstance(application).vaaniDao()
+    private val spamScorer = SpamScorer(application, dao)
+    private val actionExecutor = ActionExecutor(dao, spamScorer)
+
+    private val voiceInput = VoiceInputManager(application)
+    private val voiceOutput = VoiceOutputManager(application)
+    private var listeningJob: Job? = null
 
     private val _modelState = MutableStateFlow<ModelState>(ModelState.NotDownloaded)
     val modelState: StateFlow<ModelState> = _modelState.asStateFlow()
@@ -37,12 +54,45 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val _isGenerating = MutableStateFlow(false)
     val isGenerating: StateFlow<Boolean> = _isGenerating.asStateFlow()
 
+    private val _voiceInputState = MutableStateFlow<VoiceInputState>(VoiceInputState.Idle)
+    val voiceInputState: StateFlow<VoiceInputState> = _voiceInputState.asStateFlow()
+
+    private val _speakRepliesEnabled = MutableStateFlow(true)
+    val speakRepliesEnabled: StateFlow<Boolean> = _speakRepliesEnabled.asStateFlow()
+
     init {
+        voiceOutput.initialize { voiceOutput.setLanguage(_language.value) }
         viewModelScope.launch {
             _language.value = preferences.replyLanguage.first()
             _preferGpu.value = preferences.backend.first() == "GPU"
+            voiceOutput.setLanguage(_language.value)
         }
         checkExistingModel()
+    }
+
+    fun setSpeakRepliesEnabled(enabled: Boolean) {
+        _speakRepliesEnabled.value = enabled
+        if (!enabled) voiceOutput.stopSpeaking()
+    }
+
+    /** Starts listening; auto-sends the final transcript as a message. */
+    fun startVoiceInput() {
+        if (listeningJob?.isActive == true) return
+        listeningJob = viewModelScope.launch {
+            voiceInput.startListening(_language.value).collect { state ->
+                _voiceInputState.value = state
+                if (state is VoiceInputState.Final) {
+                    if (state.text.isNotBlank()) sendMessage(state.text)
+                    _voiceInputState.value = VoiceInputState.Idle
+                }
+            }
+        }
+    }
+
+    fun stopVoiceInput() {
+        listeningJob?.cancel()
+        listeningJob = null
+        _voiceInputState.value = VoiceInputState.Idle
     }
 
     fun setPreferGpu(useGpu: Boolean) {
@@ -99,6 +149,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setLanguage(newLanguage: AppLanguage) {
         _language.value = newLanguage
+        voiceOutput.setLanguage(newLanguage)
         viewModelScope.launch {
             preferences.setReplyLanguage(newLanguage)
             if (engine.isReady()) {
@@ -108,11 +159,26 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun sendMessage(text: String) {
-        if (text.isBlank() || !engine.isReady() || _isGenerating.value) return
+        if (text.isBlank() || _isGenerating.value) return
 
         _messages.value = _messages.value + ChatMessage(text, isFromUser = true)
-        _isGenerating.value = true
 
+        val action = IntentRouter.classify(text)
+        if (action !is AssistantAction.Chat) {
+            _isGenerating.value = true
+            viewModelScope.launch {
+                val confirmation = actionExecutor.execute(action, _language.value)
+                    ?: "Done."
+                _messages.value = _messages.value + ChatMessage(confirmation, isFromUser = false)
+                _isGenerating.value = false
+                speakIfEnabled(confirmation)
+            }
+            return
+        }
+
+        if (!engine.isReady()) return
+
+        _isGenerating.value = true
         val responseIndex = _messages.value.size
         _messages.value = _messages.value + ChatMessage("", isFromUser = false)
 
@@ -128,6 +194,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     updateMessageAt(responseIndex, builder.toString())
                 }
             _isGenerating.value = false
+            speakIfEnabled(builder.toString())
+        }
+    }
+
+    private fun speakIfEnabled(text: String) {
+        if (_speakRepliesEnabled.value && text.isNotBlank()) {
+            viewModelScope.launch { voiceOutput.speak(text).collect {} }
         }
     }
 
@@ -142,5 +215,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     override fun onCleared() {
         super.onCleared()
         engine.close()
+        voiceOutput.shutdown()
+        listeningJob?.cancel()
     }
 }
