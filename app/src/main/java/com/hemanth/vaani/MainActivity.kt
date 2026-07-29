@@ -14,6 +14,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -24,9 +25,13 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.rememberNavController
 import com.hemanth.vaani.data.CallLogEntity
 import com.hemanth.vaani.data.ScreeningOutcome
 import com.hemanth.vaani.data.VaaniDatabase
+import com.hemanth.vaani.ui.chat.ChatScreen
 import com.hemanth.vaani.ui.theme.VaaniTheme
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -46,13 +51,22 @@ class MainActivity : ComponentActivity() {
         setContent {
             VaaniTheme(darkTheme = true) {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    VaaniHome(
-                        callLog = callLogFlow,
-                        onRequestScreeningRole = ::requestCallScreeningRole,
-                        onRequestMicPermission = ::requestMicPermission,
-                        hasScreeningRole = ::hasCallScreeningRole,
-                        hasMicPermission = ::hasMicPermission
-                    )
+                    val navController = rememberNavController()
+                    NavHost(navController = navController, startDestination = "home") {
+                        composable("home") {
+                            VaaniHome(
+                                callLog = callLogFlow,
+                                onRequestScreeningRole = ::requestCallScreeningRole,
+                                onRequestMicPermission = ::requestMicPermission,
+                                hasScreeningRole = ::hasCallScreeningRole,
+                                hasMicPermission = ::hasMicPermission,
+                                onOpenChat = { navController.navigate("chat") }
+                            )
+                        }
+                        composable("chat") {
+                            ChatScreen(onBack = { navController.popBackStack() })
+                        }
+                    }
                 }
             }
         }
@@ -94,19 +108,31 @@ fun VaaniHome(
     onRequestScreeningRole: () -> Unit,
     onRequestMicPermission: () -> Unit,
     hasScreeningRole: () -> Boolean,
-    hasMicPermission: () -> Boolean
+    hasMicPermission: () -> Boolean,
+    onOpenChat: () -> Unit
 ) {
     val entries by callLog.asStateFlow().collectAsStateWithLifecycle()
     var screeningGranted by remember { mutableStateOf(hasScreeningRole()) }
     var micGranted by remember { mutableStateOf(hasMicPermission()) }
 
     Column(modifier = Modifier.fillMaxSize().padding(20.dp)) {
-        Text("Vaani", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-        Text(
-            "Your on-device, multilingual assistant",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
+                Text("Vaani", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                Text(
+                    "Your on-device, multilingual assistant",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            FilledTonalIconButton(onClick = onOpenChat) {
+                Icon(Icons.Filled.Chat, contentDescription = "Open chat")
+            }
+        }
 
         Spacer(Modifier.height(24.dp))
 
