@@ -34,6 +34,13 @@
             </intent-filter>
         </activity>
 
+        <!-- Required for LiteRT-LM's Backend.GPU() (OpenCL delegate).
+             required="false" so the app still installs/runs on devices
+             without these libs -- engine init just falls back to CPU. -->
+        <uses-native-library android:name="libvndksupport.so" android:required="false" />
+        <uses-native-library android:name="libOpenCL.so" android:required="false" />
+        <uses-native-library android:name="libOpenCL-pixel.so" android:required="false" />
+
         <!-- CallScreeningService role: user grants this via RoleManager,
              no need to replace the default dialer. -->
         <service
