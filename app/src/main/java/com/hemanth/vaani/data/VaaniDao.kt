@@ -16,6 +16,12 @@ interface VaaniDao {
     @Query("SELECT * FROM call_log ORDER BY timestampMillis DESC")
     fun observeCallLog(): Flow<List<CallLogEntity>>
 
+    @Query("SELECT * FROM call_log ORDER BY timestampMillis DESC LIMIT 1")
+    suspend fun getLastCall(): CallLogEntity?
+
+    @Query("SELECT * FROM call_log ORDER BY timestampMillis DESC LIMIT :limit")
+    suspend fun getRecentCalls(limit: Int): List<CallLogEntity>
+
     // --- Spam numbers ---
     @Query("SELECT * FROM spam_numbers WHERE phoneNumber = :number LIMIT 1")
     suspend fun findSpamEntry(number: String): SpamNumberEntity?
