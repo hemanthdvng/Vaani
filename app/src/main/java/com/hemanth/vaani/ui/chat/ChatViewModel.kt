@@ -18,6 +18,7 @@ import com.hemanth.vaani.voice.VoiceInputManager
 import com.hemanth.vaani.voice.VoiceInputState
 import com.hemanth.vaani.voice.VoiceOutputManager
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -60,6 +61,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val _speakRepliesEnabled = MutableStateFlow(true)
     val speakRepliesEnabled: StateFlow<Boolean> = _speakRepliesEnabled.asStateFlow()
 
+    private val _isSpeaking = MutableStateFlow(false)
+    val isSpeaking: StateFlow<Boolean> = _isSpeaking.asStateFlow()
+
+    private val _continuousModeEnabled = MutableStateFlow(false)
+    val continuousModeEnabled: StateFlow<Boolean> = _continuousModeEnabled.asStateFlow()
+
     init {
         voiceOutput.initialize { voiceOutput.setLanguage(_language.value) }
         viewModelScope.launch {
@@ -75,9 +82,19 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         if (!enabled) voiceOutput.stopSpeaking()
     }
 
+    /**
+     * Hands-free mode: after Vaani finishes speaking a reply, the mic
+     * automatically re-arms for the next thing you say -- no need to tap
+     * the mic button each turn. Turning this off returns to tap-to-talk.
+     */
+    fun setContinuousModeEnabled(enabled: Boolean) {
+        _continuousModeEnabled.value = enabled
+        if (!enabled) stopVoiceInput()
+    }
+
     /** Starts listening; auto-sends the final transcript as a message. */
     fun startVoiceInput() {
-        if (listeningJob?.isActive == true) return
+        if (listeningJob?.isActive == true || _isSpeaking.value) return
         listeningJob = viewModelScope.launch {
             voiceInput.startListening(_language.value).collect { state ->
                 _voiceInputState.value = state
@@ -172,7 +189,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     ?: "Done."
                 _messages.value = _messages.value + ChatMessage(confirmation, isFromUser = false)
                 _isGenerating.value = false
-                speakIfEnabled(confirmation)
+                speakThenMaybeRelisten(confirmation)
             }
             return
         }
@@ -195,13 +212,26 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     updateMessageAt(responseIndex, builder.toString())
                 }
             _isGenerating.value = false
-            speakIfEnabled(builder.toString())
+            speakThenMaybeRelisten(builder.toString())
         }
     }
 
-    private fun speakIfEnabled(text: String) {
+    /**
+     * Speaks the reply (if enabled), waits for it to fully finish, adds a
+     * short decay buffer for any lingering speaker echo, THEN -- and only
+     * then -- re-arms the mic if continuous mode is on. This ordering is
+     * the actual mechanism that stops Vaani from hearing its own voice:
+     * listening and speaking never overlap in time, by construction.
+     */
+    private suspend fun speakThenMaybeRelisten(text: String) {
         if (_speakRepliesEnabled.value && text.isNotBlank()) {
-            viewModelScope.launch { voiceOutput.speak(text).collect {} }
+            _isSpeaking.value = true
+            voiceOutput.speak(text).collect {}
+            delay(400) // let any trailing speaker echo in the room decay
+            _isSpeaking.value = false
+        }
+        if (_continuousModeEnabled.value) {
+            startVoiceInput()
         }
     }
 
