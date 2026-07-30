@@ -10,6 +10,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Loop
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.Send
@@ -39,6 +40,8 @@ fun ChatScreen(onBack: () -> Unit, viewModel: ChatViewModel = viewModel()) {
     val preferGpu by viewModel.preferGpu.collectAsState()
     val voiceInputState by viewModel.voiceInputState.collectAsState()
     val speakRepliesEnabled by viewModel.speakRepliesEnabled.collectAsState()
+    val isSpeaking by viewModel.isSpeaking.collectAsState()
+    val continuousModeEnabled by viewModel.continuousModeEnabled.collectAsState()
 
     val context = LocalContext.current
     var hasMicPermission by remember {
@@ -60,6 +63,13 @@ fun ChatScreen(onBack: () -> Unit, viewModel: ChatViewModel = viewModel()) {
                 }
             },
             actions = {
+                IconButton(onClick = { viewModel.setContinuousModeEnabled(!continuousModeEnabled) }) {
+                    Icon(
+                        Icons.Filled.Loop,
+                        contentDescription = "Toggle hands-free conversation",
+                        tint = if (continuousModeEnabled) MaterialTheme.colorScheme.primary else LocalContentColor.current
+                    )
+                }
                 IconButton(onClick = { viewModel.setSpeakRepliesEnabled(!speakRepliesEnabled) }) {
                     Icon(
                         if (speakRepliesEnabled) Icons.Filled.VolumeUp else Icons.Filled.VolumeOff,
@@ -74,6 +84,8 @@ fun ChatScreen(onBack: () -> Unit, viewModel: ChatViewModel = viewModel()) {
             is ModelState.Ready -> ChatBody(
                 messages = messages,
                 isGenerating = isGenerating,
+                isSpeaking = isSpeaking,
+                continuousModeEnabled = continuousModeEnabled,
                 voiceInputState = voiceInputState,
                 hasMicPermission = hasMicPermission,
                 onSend = viewModel::sendMessage,
@@ -205,6 +217,8 @@ private fun mbOf(bytes: Long): String =
 private fun ChatBody(
     messages: List<ChatMessage>,
     isGenerating: Boolean,
+    isSpeaking: Boolean,
+    continuousModeEnabled: Boolean,
     voiceInputState: VoiceInputState,
     hasMicPermission: Boolean,
     onSend: (String) -> Unit,
@@ -214,6 +228,9 @@ private fun ChatBody(
     val listState = rememberLazyListState()
     val isListening = voiceInputState is VoiceInputState.Listening ||
         voiceInputState is VoiceInputState.Partial
+    // The mic can never be active while Vaani is speaking -- this is what
+    // stops it from hearing its own voice, not any acoustic detection.
+    val micBlocked = isGenerating || isSpeaking
 
     LaunchedEffect(messages.size) {
         if (messages.isNotEmpty()) listState.animateScrollToItem(messages.size - 1)
@@ -227,6 +244,20 @@ private fun ChatBody(
             contentPadding = PaddingValues(vertical = 12.dp)
         ) {
             items(messages) { message -> MessageBubble(message) }
+        }
+
+        if (continuousModeEnabled) {
+            Text(
+                when {
+                    isSpeaking -> "Speaking..."
+                    isListening -> "Listening..."
+                    isGenerating -> "Thinking..."
+                    else -> "Hands-free mode on"
+                },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary
+            )
         }
 
         if (voiceInputState is VoiceInputState.Partial) {
@@ -254,10 +285,10 @@ private fun ChatBody(
                 onValueChange = { input = it },
                 modifier = Modifier.weight(1f),
                 placeholder = { Text("Ask Vaani anything...") },
-                enabled = !isGenerating && !isListening
+                enabled = !micBlocked && !isListening
             )
             Spacer(Modifier.width(8.dp))
-            IconButton(onClick = onMicClick, enabled = !isGenerating) {
+            IconButton(onClick = onMicClick, enabled = !micBlocked) {
                 Icon(
                     if (isListening) Icons.Filled.Mic else Icons.Filled.MicOff,
                     contentDescription = if (hasMicPermission) "Voice input" else "Grant microphone permission",
@@ -269,7 +300,7 @@ private fun ChatBody(
                     onSend(input)
                     input = ""
                 },
-                enabled = !isGenerating && !isListening && input.isNotBlank()
+                enabled = !micBlocked && !isListening && input.isNotBlank()
             ) {
                 Icon(Icons.Filled.Send, contentDescription = "Send")
             }
