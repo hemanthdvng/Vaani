@@ -108,6 +108,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private fun checkExistingModel() {
         if (downloadManager.isDownloaded(VaaniDefaults.MODEL_FILE_NAME)) {
             _modelState.value = ModelState.Downloaded
+            viewModelScope.launch { initializeEngine() }
         }
     }
 
